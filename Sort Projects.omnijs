@@ -1,0 +1,90 @@
+/*{
+    "author": "github.com/robmuth",
+    "targets": ["omnifocus"],
+    "type": "action",
+    "identifier": "github.com/robmuth/omnifocus-personal-plugins/Sort Projects.omnijs",
+    "version": "1.0",
+    "description": "A OmniFocus plug-in that sorts all projects alphabetically expect when they have a specified position",
+    "label": "Sort Projects",
+    "mediumLabel": "Sort Projects",
+    "paletteLabel": "Sort Projects",
+}*/
+
+(() => {
+    var action = new PlugIn.Action(function(selection) {
+        // Sorting order:
+        // - Positive numbers indicate position at top (0: first item)
+        // - Negatie numbers at bottom
+        // - When same numbers the order in the list counts
+        const positions = [
+            { "order": 0,  "name": "Orga Allgemein" }, 
+            { "order": 0,  "name": "TU Orga Allgemein" },
+            { "order": 1,  "name": "TU" },
+            { "order": -1, "name": "Memo" },
+            { "order": -1, "name": "Templates" }
+        ];
+
+        // sortFolders is a list which contains all found folders and the root folder at the top (the "library")
+        let sortFolders = [
+            {
+                position: library.beginning,
+                children: library
+            },
+            ...flattenedFolders.map(fld => {
+             return {
+                 position: fld,
+                 children: fld.children
+             }
+            })
+        ];
+
+        // sort each folder separately
+        for(let i = 0; i < sortFolders.length; i++) {
+            const folder = sortFolders[i];
+            const children = folder.children;
+            const position = folder.position;
+        
+            const lastIndex = children.length; // for calculating the index of negative positions
+
+            // Sort all projects by name, also the one with specified posittions
+            let sortedProjects = [...children];
+            sortedProjects.sort((l, r) => {
+                return l.name > r.name;
+            });
+
+            // Filter projects with specified positions
+            let fixedIndexProjects = sortedProjects.filter(prj => positions.map(pos => pos.name).indexOf(prj.name) !== -1);
+            sortedProjects = sortedProjects.filter(prj => fixedIndexProjects.indexOf(prj) === -1);
+
+            // sort "positions" array by order
+            let positionsOrder = positions.map(pos => pos.order);
+            positionsOrder.sort();
+
+            // Search for projects with specified position and insert them into the sorted list at the right position
+            positionsOrder.forEach(order => {
+                const projectsToAdd = fixedIndexProjects.filter(prj => positions.find(pos => pos.name == prj.name).order == order && sortedProjects.indexOf(prj) === -1);
+
+                projectsToAdd.forEach(project => {
+                    let newIndex = order;
+
+                    if(newIndex < 0)
+                        newIndex += lastIndex - 1;
+
+                    sortedProjects.splice(newIndex, 0, project);
+                });
+            });
+
+            // Security assertion
+            if(lastIndex == sortedProjects.length) {
+                // Only move projects when their is no missing
+                moveSections(sortedProjects, position);
+            } else {
+                console.log("Security abort, missing projects in " + folder.name + ". It had " + lastIndex + " items and would have " + sortedProjects.length + " after sorting.")
+            }
+        }
+    });
+
+    action.validate = () => true
+        
+    return action;
+})();
