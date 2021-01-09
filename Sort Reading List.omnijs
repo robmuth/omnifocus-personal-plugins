@@ -1,0 +1,275 @@
+/*{
+    "author": "github.com/robmuth",
+    "targets": ["omnifocus"],
+    "type": "action",
+    "identifier": "github.com/robmuth/omnifocus-personal-plugins/Sort Reading List.omnijs",
+    "version": "1.0",
+    "description": "A OmniFocus plug-in that sorts my reading list based on keywords in the descriptions",
+    "label": "Sort Reading List",
+    "mediumLabel": "Sort Reading List",
+    "paletteLabel": "Sort Reading List",
+}*/
+
+(() => {
+    // =========== Configs ===========
+    const projectName = "Leseliste"; // the projects for sorting
+    const asapTodayHour = 18; // the due hour for ASAP papers
+
+    // category names (Read, Inbox, ASAP have a special function)
+    // Read => Already read papers will be sorted to that category and keep category
+    // Inbox => Could not be sorted by keyword (no keyword assigned?)
+    // ASAP => Will have due today
+    const categories = ["Read", "Paper", "Novel", "Tool", "Misc", "ASAP", "Fun", "Explore", "Voting", "Promotion", "Skills", "Inbox"];
+    
+    // =========== Helper Functions ===========
+    // Search for a URL in title and note
+    const getURL = (task) => {
+        const urlRegex = new RegExp(/(https?:\/\/[^\s]+)/, "g");
+        
+        const titleMatch = task.name.match(urlRegex);
+        const noteMatch = task.note.match(urlRegex);
+
+        if(titleMatch != null)
+            return titleMatch[0];
+        else if(noteMatch != null)
+            return noteMatch[0];
+        return null;
+    };
+
+    // Get keywords from title, note, and tags
+    const getKeywords = (task) => {
+        let keywords = [];
+        
+        // Keywords that are in the title
+        keywords = [...keywords, ...categories.filter(c => task.name.toLowerCase().indexOf(c.toLowerCase()) !== -1)];
+
+        // Keywords in the note
+        keywords = [...keywords, ...categories.filter(c => task.note.toLowerCase().indexOf(c.toLowerCase()) !== -1)];
+
+        // Keywords in tags
+        keywords = [...keywords, ...task.tags.filter(t => categories.map(c => c.toLowerCase()).indexOf(t.name.toLowerCase()) !== -1).map(t => t.name)];
+
+        // Sort and unique
+        keywords = [...new Set(keywords)];
+        keywords.sort();
+
+        return keywords;
+    };
+
+    // Title is the original title w/o the URL and w/o keyswords
+    const getTitle = (task) => {
+        let title = task.name || "";
+         
+         // Remove keywords
+        categories.forEach(c => { title = title.replace(new RegExp(c + " ?", "gi"), ""); });
+        title = title.replace(/[(][,\s]*[)]/g, "");
+
+        // Remove URL
+        const url = getURL(task);
+        title = title.replace(url, "").replace(url, "");
+        title = title.replace(/(\s)\1+/g, "$1"); // Replace multi appearences of (different) whitespaces
+
+        return title;
+    }
+
+    // Keep original note but put URL at the beginning
+    const getNote = (task) => {
+        let note = task.note || "";
+
+        // Only change note if it does not beginn with the URL
+        const url = getURL(task);
+        if(note.startsWith(url))
+            return note;
+
+        // Remove URL
+        note = note.replace(url, "").replace(url, "");
+
+        // Put URL at beginning
+        if(note && note.length > 0)
+            note = url + "\n" + note;
+        else
+            note = url;
+
+        return note;
+    }
+
+    // Make sure that all categories/keywords have a task and that they are sorted at the top
+    const restoreCategories = (task) => {
+        // Only add "Read" and "ASAP" only to main project task
+        const catTasks = task.name === projectName ? categories : categories.filter(c => c !== "Read" && c !== "ASAP");
+
+        // First check if they exists and create if not
+        const missingCategories = catTasks.filter(c => task.children.map(t => t.name.toLowerCase()).indexOf(c.toLowerCase()) === -1);
+
+        // Add missing categories
+        if(missingCategories.length > 0) {
+            console.log("Missing categories in " + task.name + ": " + missingCategories);
+            missingCategories.forEach(categoryName => {
+                let newTask = new Task(categoryName, task.ending);
+            });
+        }
+
+        // Sort categories
+        let sortTasks = task.children;
+
+        sortTasks.sort((l, r) => {
+            // l and r are not categories
+            if(catTasks.indexOf(l.name) === -1 && catTasks.indexOf(r.name) === -1)
+                return 0;
+
+            // l Is a category, r is not => move l up
+            if(catTasks.indexOf(l.name) !== -1 && catTasks.indexOf(r.name) === -1)
+                return -1;
+
+            // l is not a category, r is one => move l down
+            if(catTasks.indexOf(l.name) === -1 && catTasks.indexOf(r.name) !== -1)
+                return 1;
+
+            // Both are categories => move by their index
+            const lIndex = catTasks.indexOf(l.name);
+            const rIndex = catTasks.indexOf(r.name);
+
+            return lIndex < rIndex ? -1 : 0;
+        });
+
+        moveTasks(sortTasks, task);
+    }
+
+    const getCategoryTask = (categoryName, read) => {
+        const project = flattenedProjects.byName(projectName);
+        const top = read ? project.task.children[0] : project.task;
+        
+        if(categoryName)
+            return top.children.find(c => c.name.toLowerCase() === categoryName.toLowerCase());
+        else
+            return top.children;
+    }
+
+    // =========== Sorting ===========
+    const action = new PlugIn.Action(function(selection) {
+        const readinglistProject = flattenedProjects.byName(projectName);
+
+        // Add categories, if they do not exists
+        restoreCategories(readinglistProject.task);
+        restoreCategories(readinglistProject.task.children[0]); // It's the "Read" category
+
+        // If marked completed => Make available again and sort to Read category
+        const completedTasks = readinglistProject.task.flattenedChildren.filter(e => e.completed === true && e.hasChildren === false && categories.indexOf(e.name) === -1);
+        for(let i = 0; i < completedTasks.length; i++) {
+            const task = completedTasks[i];
+
+            if(task.completed && !task.hasChildren) {
+                task.name = task.name + " READ";
+                task.note = task.note + " Read: " + task.completionDate;
+                task.dueDate = null;
+                task.markIncomplete();
+
+                if(task.tags.length > 0) {
+                    for(let i = 0; i < task.tags.length; i++) {
+                        const tag = task.tags[i];
+
+                        if(tag.name === "ASAP") {
+                            task.removeTag(tag);
+                            break;
+                        }
+                    }
+                }
+
+                moveTasks([task], readinglistProject.task.ending);
+            }    
+        }
+
+        // Process new tasks (uncompleted and unsorted)
+        const projectTasks = readinglistProject.task.children.filter(e => e.completed === false && e.hasChildren === false && categories.indexOf(e.name) === -1);
+        let moves = [];
+        for(let i = 0; i < projectTasks.length; i++) {
+            const task = projectTasks[i];
+
+            if(task.taskStatus !== Task.Status.Available)
+                continue;
+            
+            let url = getURL(task);
+            let keywords = getKeywords(task);
+
+            let title = getTitle(task);
+            let note = getNote(task);
+            
+            let read = keywords.indexOf("Read") !== -1;
+            let category = keywords.filter(k => k !== "Read")[0] || "Inbox";
+
+            if(url && title && note) {
+                const categoryTask = getCategoryTask(category, read);
+                
+                if(categoryTask) {
+                    task.name = title.replace(/^[\s]+/, "").replace(/[\s]+$/, ""); // Trim title;
+                    task.note = note;
+                    task.dueDate = task.dueDate;
+
+                    if(keywords.filter(k => k !== "ASAP").length > 0)
+                        task.name = task.name + " (" + keywords.filter(k => k !== "ASAP").join(", ") + ")";
+
+                    moves = [...moves, {
+                            task: task,
+                            newPosition: categoryTask
+                        }
+                    ];
+                    console.log(task);
+                }
+            }
+        }        
+
+        // Move tasks bundled
+        const movePositions = [...new Set(moves.map(move => move.newPosition))];
+        for(const newPosition of movePositions) {
+            const tasks = moves.filter(m => m.newPosition == newPosition).map(m => m.task);
+            moveTasks(tasks, newPosition);
+        }
+
+        // Set ASAP due date to today
+        let asapCategory = readinglistProject.children.find(t => t.name === "ASAP");
+        if(asapCategory.hasChildren) {
+            asapCategory.children.forEach(task => {
+                due = new Date();
+                due.setHours(asapTodayHour);
+                due.setMinutes(0);
+                due.setSeconds(0);
+
+                task.dueDate = due;
+            }); 
+        }
+
+        if(asapCategory)
+            asapCategory.dueDate = null;
+        
+        // Collapse all read and expand all others
+        if(document.windows && document.windows[0] && document.windows[0].content && document.windows[0].content.nodeForObject) { // Desktop only 
+            const allNodes = document.windows[0].content.nodeForObject(readinglistProject.task);
+
+            if(allNodes) {
+                allNodes.collapseNote(true);
+                allNodes.expand(true);
+
+                const readNode = document.windows[0].content.nodeForObject(readinglistProject.task.children[0]);
+                readNode.collapse(true);
+                readNode.collapseNote(true);
+
+                categories.filter(c => c !== "Read").forEach(c => {
+                    const categoryTask = getCategoryTask(c, false);
+                    const categoryNode = document.windows[0].content.nodeForObject(categoryTask);
+                    categoryNode.collapseNote(false);
+                });
+
+                readinglistProject.task.flattenedChildren.filter(e => !e.hasChildren).map(task => document.windows[0].content.nodeForObject(task)).forEach(node => {
+                    if(node) {
+                        node.collapse(false);
+                        node.collapseNote(false);
+                    }
+                });
+            }
+        } 
+    });
+    
+    action.validate = () => true // Action always available
+        
+    return action;
+})();
