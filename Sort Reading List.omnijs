@@ -3,7 +3,7 @@
     "targets": ["omnifocus"],
     "type": "action",
     "identifier": "github.com/robmuth/omnifocus-personal-plugins/Sort Reading List.omnijs",
-    "version": "1.0",
+    "version": "1.1",
     "description": "A OmniFocus plug-in that sorts my reading list based on keywords in the descriptions",
     "label": "Sort Reading List",
     "mediumLabel": "Sort Reading List",
@@ -19,7 +19,7 @@
     // Read => Already read papers will be sorted to that category and keep category
     // Inbox => Could not be sorted by keyword (no keyword assigned?)
     // ASAP => Will have due today
-    const categories = ["Read", "Paper", "Novel", "Tool", "Misc", "ASAP", "Fun", "Explore", "Voting", "Promotion", "Skills", "Inbox"];
+    const categories = ["Read", "Novel", "Tool", "Misc", "ASAP", "Blockchain", "Fun", "Explore", "Voting", "Security", "ZKP", "Privacy", "Promotion", "Skills", "Inbox"];
     
     // =========== Helper Functions ===========
     // Search for a URL in title and note
@@ -40,11 +40,16 @@
     const getKeywords = (task) => {
         let keywords = [];
         
+        const containsWholeWord = (word, text) => {
+            const rx = new RegExp("([^-]|^)\\b" + word + "\\b([^-]|$)", "i"); // Search for whole words only
+            return text.match(rx) ? true : false;
+        };
+
         // Keywords that are in the title
-        keywords = [...keywords, ...categories.filter(c => task.name.toLowerCase().indexOf(c.toLowerCase()) !== -1)];
+        keywords = [...keywords, ...categories.filter(c => containsWholeWord(c, task.name))];
 
         // Keywords in the note
-        keywords = [...keywords, ...categories.filter(c => task.note.toLowerCase().indexOf(c.toLowerCase()) !== -1)];
+        keywords = [...keywords, ...categories.filter(c => containsWholeWord(c, task.note))];
 
         // Keywords in tags
         keywords = [...keywords, ...task.tags.filter(t => categories.map(c => c.toLowerCase()).indexOf(t.name.toLowerCase()) !== -1).map(t => t.name)];
@@ -59,15 +64,19 @@
     // Title is the original title w/o the URL and w/o keyswords
     const getTitle = (task) => {
         let title = task.name || "";
-         
-         // Remove keywords
-        categories.forEach(c => { title = title.replace(new RegExp(c + " ?", "gi"), ""); });
-        title = title.replace(/[(][,\s]*[)]/g, "");
 
         // Remove URL
         const url = getURL(task);
         title = title.replace(url, "").replace(url, "");
         title = title.replace(/(\s)\1+/g, "$1"); // Replace multi appearences of (different) whitespaces
+
+        // Remove keywords
+        categories.forEach(c => { title = title.replace(new RegExp(c + " ?", "gi"), ""); });
+        title = title.replace(/[(][,\s]*[)]/g, "");
+
+        // If no title, set URL
+        if(title.replace(/\s/g, "").length == 0)
+            title = url;
 
         return title;
     }
